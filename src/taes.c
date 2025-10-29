@@ -137,6 +137,22 @@ uint8_t gmul3(uint8_t a) {
     return gmul2(a) ^ a;  // 3*a = 2*a + a in GF(2^8)
 }
 
+uint8_t gmul9(uint8_t a) {
+    return gmul2(gmul2(gmul2(a))) ^ a;  // 9*a = 8*a + a
+}
+
+uint8_t gmul11(uint8_t a) {
+    return gmul2(gmul2(gmul2(a))) ^ gmul2(a) ^ a;  // 11*a = 8*a + 2*a + a
+}
+
+uint8_t gmul13(uint8_t a) {
+    return gmul2(gmul2(gmul2(a))) ^ gmul2(gmul2(a)) ^ a;  // 13*a = 8*a + 4*a + a
+}
+
+uint8_t gmul14(uint8_t a) {
+    return gmul2(gmul2(gmul2(a))) ^ gmul2(gmul2(a)) ^ gmul2(a);  // 14*a = 8*a + 4*a + 2*a
+}
+
 static void mix_columns(uint8_t *state) {
     for (int col = 0; col < 4; col++) {
         uint8_t s0 = state[col * 4];
@@ -151,19 +167,19 @@ static void mix_columns(uint8_t *state) {
     }
 }
 
-  // Inverse MixColumns transformation for decryption
-  static void inv_mix_columns(uint8_t *state) {
-      for (int col = 0; col < 4; col++) {
-          uint8_t s0 = state[col * 4];
-          uint8_t s1 = state[col * 4 + 1];
-          uint8_t s2 = state[col * 4 + 2];
-          uint8_t s3 = state[col * 4 + 3];
+// Inverse MixColumns transformation for decryption
+static void inv_mix_columns(uint8_t *state) {
+    for (int col = 0; col < 4; col++) {
+        uint8_t s0 = state[col * 4];
+        uint8_t s1 = state[col * 4 + 1];
+        uint8_t s2 = state[col * 4 + 2];
+        uint8_t s3 = state[col * 4 + 3];
 
-        //   state[col]      = gmul14(s0) ^ gmul11(s1) ^ gmul13(s2) ^ gmul9(s3);
-        //   state[col + 4]  = gmul9(s0) ^ gmul14(s1) ^ gmul11(s2) ^ gmul13(s3);
-        //   state[col + 8]  = gmul13(s0) ^ gmul9(s1) ^ gmul14(s2) ^ gmul11(s3);
-        //   state[col + 12] = gmul11(s0) ^ gmul13(s1) ^ gmul9(s2) ^ gmul14(s3);
-      }
+        state[col * 4]     = gmul14(s0) ^ gmul11(s1) ^ gmul13(s2) ^ gmul9(s3);
+        state[col * 4 + 1] = gmul9(s0) ^ gmul14(s1) ^ gmul11(s2) ^ gmul13(s3);
+        state[col * 4 + 2] = gmul13(s0) ^ gmul9(s1) ^ gmul14(s2) ^ gmul11(s3);
+        state[col * 4 + 3] = gmul11(s0) ^ gmul13(s1) ^ gmul9(s2) ^ gmul14(s3);
+    }
 }
 
 static void sub_bytes(uint8_t *state) {
@@ -272,7 +288,7 @@ void taes_encrypt_block(const taes_ctx *ctx, const uint8_t *plaintext, uint8_t *
     print_state(plaintext);
 
     printf("round [%d].k_sch ", round);
-    print_state(ctx->round_keys[0]);
+    print_state(&ctx->round_keys[0]);
     
     add_round_key(ctx, plaintext, ciphertext, round);
     
@@ -328,8 +344,9 @@ void taes_encrypt_block(const taes_ctx *ctx, const uint8_t *plaintext, uint8_t *
 void taes_decrypt_block(const taes_ctx *ctx, const uint8_t *ciphertext, uint8_t *plaintext) {
     // TODO: Implement T-AES decryption
     // 1. Initial AddRoundKey
-    uint8_t round = ctx->num_rounds - 1;
+    uint8_t round = ctx->num_rounds;
     add_round_key(ctx, ciphertext, plaintext, round);
+
     // 2. Rounds (num_rounds - 1) to 1:
     for (round = ctx->num_rounds - 1; round >= 1; round--) {
         //    - InvShiftRows
@@ -339,23 +356,22 @@ void taes_decrypt_block(const taes_ctx *ctx, const uint8_t *ciphertext, uint8_t 
         //    - AddRoundKey (apply tweak modification at tweak_round)
         if (round == ctx->tweak_round) {
             // Apply tweak modification to the round key
-            add_round_key(ctx, ciphertext, ciphertext, round);
-            
+            add_round_key(ctx, plaintext, plaintext, round);
+
         }else{
-            printf("Round key value: ");
-            print_state(&ctx->round_keys[round * 16]);
-            add_round_key(ctx, ciphertext, ciphertext, round);
+            add_round_key(ctx, plaintext, plaintext, round);
         }
         //    - InvMixColumns
         inv_mix_columns(plaintext);
     }
+
     // 3. Final round:
     //    - InvShiftRows
     inv_shift_rows(plaintext);
     //    - InvSubBytes
     inv_sub_bytes(plaintext);
     //    - AddRoundKey
-    add_round_key(ctx, plaintext, plaintext, round);
+    add_round_key(ctx, plaintext, plaintext, 0);
 }
 
 // Clean up context
