@@ -59,6 +59,7 @@ static void print_state(const uint8_t *state) {
 
 // Key expansion helper: SubWord operation (apply S-box to each byte of word)
 // Word format: 0xAABBCCDD where AA is byte 0, BB is byte 1, etc.
+
 static uint32_t sub_word(uint32_t word) {
     uint8_t b0 = (word >> 24) & 0xFF;
     uint8_t b1 = (word >> 16) & 0xFF;
@@ -121,7 +122,28 @@ static void add_round_key(const taes_ctx *ctx, const uint8_t *state, uint8_t *ou
     for (int i = 0; i < 16; i++) {
         output[i] = state[i] ^ ctx->round_keys[offset + i];
     }
+}
 
+static void add_tweak(const taes_ctx *ctx, uint8_t *round_key) {
+    
+    unsigned __int128 tweak = 0;
+    for (int i = 0; i < 16; i++) {
+        tweak |= ((unsigned __int128)ctx->tweak[i]) << (i * 8);
+    }
+
+    // Read round key as a 128-bit little-endian integer
+    unsigned __int128 rk = 0;
+    for (int i = 0; i < 16; i++) {
+        rk |= ((unsigned __int128)round_key[i]) << (i * 8);
+    }
+
+    // Perform 128-bit arithmetic addition
+    unsigned __int128 modified_rk = rk + tweak;
+
+    // Write back the modified round key as little-endian bytes
+    for (int i = 0; i < 16; i++) {
+        round_key[i] = (modified_rk >> (i * 8)) & 0xFF;
+    }
 }
 
 uint8_t gmul2(uint8_t a) {
@@ -282,45 +304,50 @@ int taes_init(taes_ctx *ctx, const uint8_t *key, int key_size, const uint8_t *tw
 // Encrypt a single block
 void taes_encrypt_block(const taes_ctx *ctx, const uint8_t *plaintext, uint8_t *ciphertext) {
     uint8_t round = 0;
-    // TODO: Implement T-AES encryption
     // 1. Initial AddRoundKey
-    printf("round [%d].input ", round);
-    print_state(plaintext);
+    // printf("round [%d].input ", round);
+    // print_state(plaintext);
 
-    printf("round [%d].k_sch ", round);
-    print_state(&ctx->round_keys[0]);
+    // printf("round [%d].k_sch ", round);
+    // print_state(&ctx->round_keys[0]);
     
     add_round_key(ctx, plaintext, ciphertext, round);
     
     // 2. Rounds 1 to (num_rounds - 1):
     for (round = 1; round < ctx->num_rounds; round++) {
-        printf("round [%d].start ", round);
-        print_state(ciphertext);
+        // printf("round [%d].start ", round);
+        // print_state(ciphertext);
         
         //    - SubBytes
         sub_bytes(ciphertext);
-        printf("round [%d].s_box ", round);
-        print_state(ciphertext);
+        // printf("round [%d].s_box ", round);
+        // print_state(ciphertext);
 
         //    - ShiftRows
         shift_rows(ciphertext);
-        printf("round [%d].s_row ", round);
-        print_state(ciphertext);
+        // printf("round [%d].s_row ", round);
+        // print_state(ciphertext);
 
         //    - MixColumns
         mix_columns(ciphertext);
-        printf("round [%d].m_col ", round);
-        print_state(ciphertext);
+        // printf("round [%d].m_col ", round);
+        // print_state(ciphertext);
 
         //    - AddRoundKey (apply tweak modification at tweak_round)
         if (round == ctx->tweak_round) {
-            // Apply tweak modification to the round key
-
-            add_round_key(ctx, ciphertext, ciphertext, round);
-            
-        }else{
-            printf("round [%d].k_sch ", round);
-            print_state(&ctx->round_keys[round * 16]);
+            // Apply tweak modification to a copy of the round key
+            uint8_t modified_key[16];
+            memcpy(modified_key, &ctx->round_keys[round * 16], 16);
+            add_tweak(ctx, modified_key);
+            // printf("round [%d].k_sch ", round);
+            // print_state(modified_key);
+            // XOR state with tweaked round key
+            for (int i = 0; i < 16; i++) {
+                ciphertext[i] ^= modified_key[i];
+            }
+        } else {
+            // printf("round [%d].k_sch ", round);
+            // print_state(&ctx->round_keys[round * 16]);
             add_round_key(ctx, ciphertext, ciphertext, round);
         }
     }
@@ -328,21 +355,20 @@ void taes_encrypt_block(const taes_ctx *ctx, const uint8_t *plaintext, uint8_t *
     // 3. Final round:
     //    - SubBytes
     sub_bytes(ciphertext);
-    printf("round [%d].s_box ", round);
-    print_state(ciphertext);
+    // printf("round [%d].s_box ", round);
+    // print_state(ciphertext);
     //    - ShiftRows
     shift_rows(ciphertext);
-    printf("round [%d].s_row ", round);
-    print_state(ciphertext);
+    // printf("round [%d].s_row ", round);
+    // print_state(ciphertext);
     //    - AddRoundKey
     add_round_key(ctx, ciphertext, ciphertext, round);
-    printf("round [%d].k_sch ", round);
-    print_state(&ctx->round_keys[round * 16]);
+    // printf("round [%d].k_sch ", round);
+    // print_state(&ctx->round_keys[round * 16]);
 }
 
 // Decrypt a single block
 void taes_decrypt_block(const taes_ctx *ctx, const uint8_t *ciphertext, uint8_t *plaintext) {
-    // TODO: Implement T-AES decryption
     // 1. Initial AddRoundKey
     uint8_t round = ctx->num_rounds;
     add_round_key(ctx, ciphertext, plaintext, round);
@@ -355,10 +381,15 @@ void taes_decrypt_block(const taes_ctx *ctx, const uint8_t *ciphertext, uint8_t 
         inv_sub_bytes(plaintext);
         //    - AddRoundKey (apply tweak modification at tweak_round)
         if (round == ctx->tweak_round) {
-            // Apply tweak modification to the round key
-            add_round_key(ctx, plaintext, plaintext, round);
-
-        }else{
+            // Apply tweak modification to a copy of the round key
+            uint8_t modified_key[16];
+            memcpy(modified_key, &ctx->round_keys[round * 16], 16);
+            add_tweak(ctx, modified_key);
+            // XOR state with tweaked round key
+            for (int i = 0; i < 16; i++) {
+                plaintext[i] ^= modified_key[i];
+            }
+        } else {
             add_round_key(ctx, plaintext, plaintext, round);
         }
         //    - InvMixColumns
